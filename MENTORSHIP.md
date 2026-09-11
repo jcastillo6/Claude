@@ -74,32 +74,37 @@ System design is the weakest section. Failure mode enumeration cost the most poi
 - Q38: "Tell me about a system you designed" — AML system, business stakes framing
 - Q39: 2PC vs Saga — choreography vs orchestration, non-reversible steps (email goes last)
 - Q40: Mock full interview — No Hire verdict at 88% threshold
-- Q41: Distributed job scheduler — IN PROGRESS (paused before answering, resume here)
+- Q41: Distributed job scheduler — failure modes drilled to precision (see below). Architecture not yet done.
+
+---
+
+## Q41 Detail — Distributed Job Scheduler (Failure Modes)
+
+Question: Design a distributed job scheduler. Jobs must run exactly once. 1M scheduled jobs. Workers can crash at any time. Jobs take 100ms to 30 minutes. Answer failure modes FIRST, then architecture.
+
+Outcome: all 5 failure modes reached correct final mechanisms, but only after repeated precision pushes — first-pass answers consistently named the right *shape* of solution but stopped short of the specific mechanism, and needed 3-5 follow-ups each. Notably self-committed a check-then-act (TOCTOU) mistake twice in this session, in the student's own proposed design — the same bug class they're strong at catching in *other people's* code review.
+
+| # | Failure Mode | First-Pass Answer | Precision Gap | Final Mechanism |
+|---|---|---|---|---|
+| 1 | Worker crashes mid-job, duplicate execution | "restart the work, might create duplicates" | Detection window unspecified; dedup mechanism unspecified | Heartbeat every 1s, 10s lease timeout decoupled from the 30-min job max → fencing token incremented on reassignment, checked at write time → idempotency key = job ID sent to the external system, which does check-and-record as one atomic operation (unique-constraint insert), never a worker-side read-then-write |
+| 2 | Scheduler crashes | "elect a new leader" | Where the schedule lives during the crash; the election primitive | Schedule persisted in durable storage (DB), not scheduler memory → leader election via lease/fencing token in a coordination service (etcd/ZooKeeper/DB lease row) — same pattern as worker heartbeats, one level up |
+| 3 | Clock skew between nodes | "wrong start time" (symptom, not fix) | No fix named on first pass | NTP bounds skew to a known error margin (does not eliminate it) + UTC everywhere + timeouts designed with margin above worst-case drift. TrueTime (self-named) is the same idea taken to a provable bound, not needed here |
+| 4 | Thundering herd (10K jobs at 09:00:00) | "bounded worker pool" (protects execution only) | Didn't address the burst at the trigger point | Jitter at schedule time (spread fire times across a window) + rate-limited/batched dispatch — same idea as the student's own Q33 flash-sale answer — bounded pool as second line of defense |
+
+**Generalized principle surfaced this session:** exactly-once anywhere in a distributed system requires the check-and-act to be a *single atomic operation* (unique-constraint insert / CAS), never two sequential steps — regardless of which component performs it. This is the same insight as the student's existing TOCTOU knowledge, now explicitly connected to external-system idempotency (payment gateway) and to schedule/leader-election design, not just in-process concurrency.
 
 ---
 
 ## Where to Resume Next Session
 
-**Start with Q41 — Distributed Job Scheduler (Design for Failure First)**
+**Continue Q41 — Architecture + Exactly-Once Execution Mechanism**
 
-The question requires failure modes BEFORE architecture. This trains the most critical remaining habit.
+Failure modes are done. Next: have the student design the actual architecture (schedule store, dispatcher, worker pool, lease/coordination service) incorporating all 5 mechanisms above, before moving on.
 
-The question:
-> Design a distributed job scheduler. Jobs must run exactly once. 1M scheduled jobs. Workers can crash at any time. Jobs take 100ms to 30 minutes. Answer failure modes FIRST, then architecture.
-
-Five failure modes the user must name:
-1. Worker crashes mid-job → stuck in RUNNING forever → heartbeat timeout + re-queue
-2. Two workers pick same job → duplicate execution → distributed lock (Redis SETNX or DB row lock)
-3. Scheduler crashes → jobs missed → at-least-once scheduling + idempotent execution
-4. Clock skew between nodes → wrong fire time → NTP + UTC everywhere
-5. Thundering herd → 10K jobs at 09:00:00 → jitter + rate-limited dispatch
-
-Then: architecture + exactly-once execution mechanism.
-
-**After Q41, continue with:**
+**After Q41 architecture, continue with:**
 - Behavioral: cross-team collaboration without authority (not yet covered)
 - System design: distributed search OR real-time leaderboard
-- Repeat mock interview — target system design failure modes specifically
+- Repeat mock interview — target system design failure modes specifically, and self-audit for check-then-act in own designs
 
 ---
 
@@ -176,6 +181,11 @@ Then: architecture + exactly-once execution mechanism.
 - Fail open vs fail closed — explicit tradeoff decision for every external dependency
 - Degraded mode — run what you can, skip what requires unavailable dependencies
 - Transaction probing — escalating amounts, new merchant detection via real-time velocity
+- Fencing tokens — monotonically increasing token per lease grant, checked at write time to reject stale writes from a reassigned worker
+- Lease-based leader election — coordination service (etcd/ZooKeeper) or DB lease row with TTL; same primitive for worker heartbeats and scheduler leader election
+- Atomic check-and-set as the universal exactly-once primitive — check and record must be one indivisible operation (unique-constraint insert / CAS), never a separate read-then-write, regardless of which component performs it
+- TrueTime — Spanner's bounded-uncertainty global clock (atomic clocks + GPS); NTP is the practical baseline for everyone else
+- Jitter — spreading scheduled fire times across a window to prevent thundering herd at the trigger point, distinct from rate-limiting at dispatch
 
 ### System Design Patterns
 - Saga pattern — compensating transactions
