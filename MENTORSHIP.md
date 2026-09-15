@@ -74,11 +74,12 @@ System design is the weakest section. Failure mode enumeration cost the most poi
 - Q38: "Tell me about a system you designed" — AML system, business stakes framing
 - Q39: 2PC vs Saga — choreography vs orchestration, non-reversible steps (email goes last)
 - Q40: Mock full interview — No Hire verdict at 88% threshold
-- Q41: Distributed job scheduler — failure modes drilled to precision (see below). Architecture not yet done.
+- Q41: Distributed job scheduler — failure modes AND architecture complete (see below). Full staff-level answer reached through precision pushes.
+- Q42: Postgres concurrency deep dive (unscheduled detour, triggered by student's own question) — row locking on UPDATE, lock held for transaction lifetime not statement lifetime, MVCC/non-repeatable reads under READ COMMITTED, practical NTP implementation (chrony config, UTC end-to-end, timeout sizing methodology)
 
 ---
 
-## Q41 Detail — Distributed Job Scheduler (Failure Modes)
+## Q41 Detail — Distributed Job Scheduler (Failure Modes + Architecture) — COMPLETE
 
 Question: Design a distributed job scheduler. Jobs must run exactly once. 1M scheduled jobs. Workers can crash at any time. Jobs take 100ms to 30 minutes. Answer failure modes FIRST, then architecture.
 
@@ -93,18 +94,31 @@ Outcome: all 5 failure modes reached correct final mechanisms, but only after re
 
 **Generalized principle surfaced this session:** exactly-once anywhere in a distributed system requires the check-and-act to be a *single atomic operation* (unique-constraint insert / CAS), never two sequential steps — regardless of which component performs it. This is the same insight as the student's existing TOCTOU knowledge, now explicitly connected to external-system idempotency (payment gateway) and to schedule/leader-election design, not just in-process concurrency.
 
+### Architecture (completed after failure modes)
+
+Final design, built through precision pushes rather than reached on first pass:
+- Schedule persisted durably (DB), not in coordinator memory
+- 1M jobs sharded via **consistent hashing with virtual nodes** across multiple coordinator instances — student correctly explained why consistent hashing beats plain `hash % N` (minimal reshuffle on node add/remove) once pushed, and correctly identified that virtual nodes solve uneven load distribution with few physical nodes
+- Each shard independently leased/elected (student correctly identified, unprompted on the second try, that ring membership alone does NOT guarantee single ownership — still needs a lease per shard, same pattern as global leader election)
+- Dispatch via Kafka; **student correctly resolved a self-introduced redundancy** — initially had both a custom coordinator heartbeat AND Kafka's own consumer-group liveness protocol tracking worker health, then correctly chose to rely on Kafka's built-in protocol instead of duplicating it, when asked to justify keeping both
+- Idempotency key (job ID) + unique-constraint atomic DB insert kept as defense-in-depth even after delegating liveness to Kafka — correctly reasoned that a straggling worker mid-job during a Kafka rebalance is the same zombie-worker risk as before, just triggered by `session.timeout.ms` instead of a custom heartbeat
+- Jitter at schedule time for thundering herd, correctly distinguished from the fencing-token mechanism that prevents race conditions (self-corrected a conflation between the two on first pass)
+- NTP + UTC + timeouts sized against measured worst-case, not assumption
+
+**Score vs. Gap 2 (Design for Failure Before Success):** strong session. This is the clearest evidence yet of closing this gap — the student not only enumerated failure modes before architecture (as instructed) but caught two self-introduced design flaws (a check-then-act race, a redundant liveness mechanism) when pushed to justify decisions, rather than needing them pointed out directly. That self-audit reflex, applied to their own design rather than someone else's code, is the actual staff-level behavior this gap was tracking.
+
 ---
 
 ## Where to Resume Next Session
 
-**Continue Q41 — Architecture + Exactly-Once Execution Mechanism**
+**Start with Q43 — Behavioral: cross-team collaboration without authority**
 
-Failure modes are done. Next: have the student design the actual architecture (schedule store, dispatcher, worker pool, lease/coordination service) incorporating all 5 mechanisms above, before moving on.
+Not yet covered in prior sessions. Push per Gap 3 rules: every escalation/friction point needs a concrete recommendation attached, not just a description of the disagreement. Push for exact words said/recommended, not paraphrase.
 
-**After Q41 architecture, continue with:**
-- Behavioral: cross-team collaboration without authority (not yet covered)
+**After Q43, continue with:**
 - System design: distributed search OR real-time leaderboard
-- Repeat mock interview — target system design failure modes specifically, and self-audit for check-then-act in own designs
+- Repeat mock interview — target system design failure modes specifically; this session suggests the student is close to closing Gap 2, so a fresh full mock (all 3 sections) is worth prioritizing soon to check if the score moved off the 88%/No-Hire threshold
+- If time allows: revisit Postgres isolation levels (Q42) briefly — student initially got READ COMMITTED non-repeatable-read behavior backwards (thought a second read in the same transaction would NOT see another transaction's intervening commit) before self-correcting when pushed; worth one quick check-question next session to confirm it stuck
 
 ---
 
@@ -186,6 +200,17 @@ Failure modes are done. Next: have the student design the actual architecture (s
 - Atomic check-and-set as the universal exactly-once primitive — check and record must be one indivisible operation (unique-constraint insert / CAS), never a separate read-then-write, regardless of which component performs it
 - TrueTime — Spanner's bounded-uncertainty global clock (atomic clocks + GPS); NTP is the practical baseline for everyone else
 - Jitter — spreading scheduled fire times across a window to prevent thundering herd at the trigger point, distinct from rate-limiting at dispatch
+- Consistent hashing with virtual nodes — sharding 1M+ items across N coordinators with minimal reshuffle on node add/remove; virtual nodes fix uneven load with few physical nodes
+- Kafka consumer group liveness as a reusable fencing mechanism — don't duplicate a custom heartbeat when the transport already provides membership/rebalance semantics; recognize when two mechanisms are solving the same problem
+- NTP practical implementation — chrony config pointed at cloud-provider internal time source (not public pool), `chronyc tracking` / `timedatectl` for verification, offset exported as a metric with alerting, UTC end-to-end (OS via `timedatectl set-timezone UTC`, Postgres `TIMESTAMPTZ` not `TIMESTAMP`, Java `Instant`/`OffsetDateTime` not `LocalDateTime`, ISO-8601 with explicit offset on the wire), timeout margin sized from measured worst-case offset, not assumed
+
+### Postgres Concurrency (New — Q42)
+- Row-level locking — plain `UPDATE` acquires an implicit row lock automatically; no `SELECT ... FOR UPDATE` required to get blocking behavior
+- Lock duration — held for the full transaction lifetime (until COMMIT/ROLLBACK), not released when the locking statement finishes; a slow operation (e.g. HTTP call) after an UPDATE holds the lock the whole time — lock contention is a distinct failure mode from connection pool exhaustion, and the two compound under load
+- MVCC — plain `SELECT` never takes a lock and is never blocked by a writer; readers and writers don't block each other
+- READ COMMITTED (Postgres default) — each *statement* takes a fresh snapshot at its own start, not once per transaction → non-repeatable reads are possible (a second read in the same transaction can see another transaction's intervening commit). Initially answered this backwards (assumed the value would stay frozen); self-corrected when pushed to trace through the mechanism statement-by-statement — worth a quick confirmation check next session
+- REPEATABLE READ / SERIALIZABLE — one snapshot for the whole transaction, taken at its first statement; prevents non-repeatable reads
+- Practical fix for read-then-write logic under READ COMMITTED — collapse into a single atomic statement (e.g. `UPDATE ... SET balance = balance - 10 WHERE balance >= 10`) or use explicit `SELECT ... FOR UPDATE`, rather than relying on isolation level alone
 
 ### System Design Patterns
 - Saga pattern — compensating transactions
