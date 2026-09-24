@@ -76,6 +76,7 @@ System design is the weakest section. Failure mode enumeration cost the most poi
 - Q40: Mock full interview — No Hire verdict at 88% threshold
 - Q41: Distributed job scheduler — failure modes AND architecture complete (see below). Full staff-level answer reached through precision pushes.
 - Q42: Postgres concurrency deep dive (unscheduled detour, triggered by student's own question) — row locking on UPDATE, lock held for transaction lifetime not statement lifetime, MVCC/non-repeatable reads under READ COMMITTED, practical NTP implementation (chrony config, UTC end-to-end, timeout sizing methodology)
+- Q43: Behavioral — cross-team collaboration without authority — INCOMPLETE, student ended the exercise before completing the final precision step (see detail below). Revealed Gap 3 is currently weaker than Gap 1/2.
 
 ---
 
@@ -109,13 +110,26 @@ Final design, built through precision pushes rather than reached on first pass:
 
 ---
 
+## Q43 Detail — Behavioral: Cross-Team Collaboration Without Authority — INCOMPLETE, closed early by student
+
+Scenario: blocked on a schema change owned by another team (payments), no authority over their roadmap, tech lead noncommittal, own deadline in 6 weeks.
+
+Progression across the exercise (each step required 2-3 precision pushes):
+1. First pass: escalation with no concrete ask ("I need your support to handle this case") — Gap 3 in its original form
+2. Pushed to specific ask + date: correctly landed on "manager contacts payments manager directly" + "15 days" as a hard trigger point
+3. Fallback: initially just labeled "solution B" with no content; pushed twice before naming the real option (ship the rest of the feature, delay only the affected rule, accept a defined coverage gap)
+4. Risk ownership: correctly identified — unprompted on this one — that accepting a fraud-coverage gap is a risk-acceptance decision, not a pure engineering call, and named "compliance" as the approver (a real, non-generic answer, unlike the earlier "business needs to approve")
+5. **Final ask — write the actual sentence to compliance, with the specifics filled in** — student first left my own placeholder brackets (`[field]`, `[specific fraud pattern]`, `[reason]`, `[other option]`) unfilled, verbatim. Given one more explicit chance to fill them in with real content, the student instead ended the exercise ("next exercise") rather than complete it.
+
+**Score vs. Gap 3: weaker than Gap 1/Gap 2 performance on the same session.** In Q41 (technical), the student closed every precision loop when pushed, including on the 3rd-4th follow-up. In Q43 (behavioral), the pattern of naming that someone-should-act without naming who/what recurred three separate times (manager support, fallback content, business approval), and the exercise ended before the final, most concrete step — an actual sentence with real specifics — was produced. This is a genuine, not cosmetic, difference: the technical precision habit does not yet transfer to behavioral/interpersonal precision under the same kind of pressure. Priority for next session.
+
+---
+
 ## Where to Resume Next Session
 
-**Start with Q43 — Behavioral: cross-team collaboration without authority**
+**Re-attempt Q43's final step first, briefly** — before moving to new material, have the student write one complete, specific sentence to a named stakeholder about a real risk trade-off, with no placeholders. This is the single most important open item from this session: closing the Gap 1→Gap 3 transfer gap.
 
-Not yet covered in prior sessions. Push per Gap 3 rules: every escalation/friction point needs a concrete recommendation attached, not just a description of the disagreement. Push for exact words said/recommended, not paraphrase.
-
-**After Q43, continue with:**
+**Then continue with:**
 - System design: distributed search OR real-time leaderboard
 - Repeat mock interview — target system design failure modes specifically; this session suggests the student is close to closing Gap 2, so a fresh full mock (all 3 sections) is worth prioritizing soon to check if the score moved off the 88%/No-Hire threshold
 - If time allows: revisit Postgres isolation levels (Q42) briefly — student initially got READ COMMITTED non-repeatable-read behavior backwards (thought a second read in the same transaction would NOT see another transaction's intervening commit) before self-correcting when pushed; worth one quick check-question next session to confirm it stuck
